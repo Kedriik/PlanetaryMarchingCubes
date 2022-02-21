@@ -291,43 +291,11 @@ void AMyPlanetActor::populatePlanetaryGeometry()
 void AMyPlanetActor::placeGeometryNode(FVector location)
 {
     this->nodes.push_back(new Node(location, Radius, Isolevel, GeometryNodeSize, NodeGridcellSize, this));
-    
-    //gridPoints
-    /*for(float X = -GeometryNodeSize;X<= GeometryNodeSize;X += GeometryNodeSize){
-        for (float Y = -GeometryNodeSize; Y <= GeometryNodeSize; Y += GeometryNodeSize) {
-            for (float Z = -GeometryNodeSize; Z <= GeometryNodeSize; Z += GeometryNodeSize) {
-                if (X == 0 && Z == 0 && Y == 0) continue;
-                //gridPoints.push_back();
-                addGridPoint(FVector(location.X + X, location.Y + Y, location.Z + Z));
-            }
-        }
-    }*/
 }
 
 void AMyPlanetActor::generateGeometries(FVector currentLocation, float scaleFactor)
 {
-    for (auto n : nodes)
-    {
-        if (FVector::Distance(currentPawnPos, n->location) < scaleFactor*IndexGridcellsDist) {
-            n->indexGrid();
-        }
-        if (FVector::Distance(currentLocation, n->location) < scaleFactor * GenerateGeometriesDist) {
-            TArray<FVector> vertices;
-            TArray<int32> Triangles;
-            TArray<FVector> normals;
-            TArray<FVector2D> UV0;
-            TArray<FProcMeshTangent> tangents;
-            TArray<FLinearColor> vertexColors;
-            if (n->generatePolygons(vertices, Triangles, normals, UV0, vertexColors, tangents) == 1) {
-                static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(n->index, vertices, Triangles, normals, UV0, vertexColors, tangents, true);
-                static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
-                if (vertexColorMaterial)
-                    static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(n->index, vertexColorMaterial);
-                else if (planetMaterial)
-                    static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(n->index, planetMaterial);
-            }
-        }
-    }
+    throw "Generate geometries is not implemented";
 }
 
 // Called every frame
@@ -357,7 +325,6 @@ void AMyPlanetActor::Tick(float DeltaTime)
                 for (float Y = -GeometryNodeSize; Y <= GeometryNodeSize; Y += GeometryNodeSize) {
                     for (float Z = -GeometryNodeSize; Z <= GeometryNodeSize; Z += GeometryNodeSize) {
                         if (X == 0 && Z == 0 && Y == 0) continue;
-                        //gridPoints.push_back();
                         addGridPoint(FVector(nodes[itoe]->location.X + X, nodes[itoe]->location.Y + Y, nodes[itoe]->location.Z + Z));
                     }
                 }
@@ -409,9 +376,26 @@ void AMyPlanetActor::Tick(float DeltaTime)
     TArray<FLinearColor> vertexColors;
     //((number + multiple/2) / multiple) * multiple;
     //((currentPawnPos.X+GeometryNodeSize/2)/GeometryNodeSize)*GeometryNodeSize
-    this->collisionNode->reindexGrid(FVector(((int)(currentPawnPos.X) / GeometryNodeSize) * GeometryNodeSize,
-        ((int)(currentPawnPos.Y) / GeometryNodeSize) * GeometryNodeSize,
-        ((int)(currentPawnPos.Z) / GeometryNodeSize) * GeometryNodeSize));
+    auto closestMultiple = [](int n, int x)
+    {
+        bool flag = false;
+        if (n < 0) {
+            flag = true;
+            n *= -1;
+        }
+        if (x > n)
+            return x;
+
+        n = n + x / 2;
+        n = n - (n % x);
+
+        return flag ? n * -1 : n;
+    };
+    this->collisionNode->reindexGrid(FVector(
+        closestMultiple((int)currentPawnPos.X, NodeGridcellSize),
+        closestMultiple((int)currentPawnPos.Y, NodeGridcellSize),
+        closestMultiple((int)currentPawnPos.Z, NodeGridcellSize)
+    ));
     
     if (this->collisionNode->generatePolygons(vertices, Triangles, normals, UV0, vertexColors, tangents) == 1) {
         static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(1, vertices, Triangles, normals, UV0, vertexColors, tangents, true);        
