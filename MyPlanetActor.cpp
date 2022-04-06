@@ -1,9 +1,8 @@
 // Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "MyPlanetActor.h"
 #include "ProceduralMeshComponent.h"
 #include <thread>
+#include <string>
 #include <chrono>
 int AMyPlanetActor::Node::id = 3;
 bool AMyPlanetActor::Node::drawDebugBoxes = false;
@@ -12,23 +11,23 @@ AMyPlanetActor::AMyPlanetActor()
     MeshComponent = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("PlanetMesh"));
     static_cast<UProceduralMeshComponent*>(MeshComponent)->bUseAsyncCooking = false;
     static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMeshSectionVisible(1, false);
+    for (int i = 0; i < this->Trees.Num(); i++) {
+        FName n((std::string("Foliage") + std::to_string(i)).c_str());
+        Trees[i] = CreateDefaultSubobject<UFoliageInstancedStaticMeshComponent>(n);
+    }
+    //this->Trees = CreateDefaultSubobject<UFoliageInstancedStaticMeshComponent>(TEXT("UFoliageInstancedStaticMeshComponent"));
+    //SetRootComponent(this->hismc);
     
 }
-
 // Called when the game starts or when spawned
 void AMyPlanetActor::BeginPlay()
 {
+
+    getTopographyAt(FVector2D(0,0));
     FVector StartPos = GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorLocation();
     Node::drawDebugBoxes = this->DrawDebugBoxes;
     if (DrawLowPoly) {
         generateSphere();
-    }
-    if(DrawMarchingCubes){
-       // populatePlanetaryGeometry();
-    }
-    for (int i = 0; i < this->nodes.size(); i++) {
-        nodesToIndex.push_back(i);
-        //nodesToGenerateGeometry.push_back(i);
     }
     auto  get_random = []()
     {
@@ -37,16 +36,37 @@ void AMyPlanetActor::BeginPlay()
         static std::uniform_real_distribution<> dis(-1, 1); // rage 0 - 1
         return dis(e);
     };
-    FVector pos = FVector(get_random(), get_random(), get_random());// *(Radius + 450.0);
+    FVector pos = FVector(get_random(), get_random(), get_random());
     pos.Normalize();
-    GetWorld()->GetFirstPlayerController()->GetPawn()->SetActorLocation(pos * (Radius + 50000.0));
+    GetWorld()->GetFirstPlayerController()->GetPawn()->SetActorLocation(pos * (Radius + 0.02*Radius));
     currentPawnPos = pos * (Radius);
-    if(DrawMarchingCubes)
-     addGridPoint(FVector4(currentPawnPos.X, currentPawnPos.Y, currentPawnPos.Z,1.0));
+   /* int instances = 0;
+    for (int i = 0; i < instances; i++) {
+        FTransform InstanceTransform;
+        FVector _loc = FVector(get_random(), get_random(), get_random());
+        _loc.Normalize();
+        _loc *= Radius;
+        InstanceTransform.SetLocation(_loc);
+        FRotator MyRotator = FRotationMatrix::MakeFromZ(_loc).Rotator();
+        InstanceTransform.SetRotation(MyRotator.Quaternion());
+        this->hismc->AddInstance(InstanceTransform);
+        //this->hismc->ClearInstances();
+    }*/
+    
+    
+    initialPosition = currentPawnPos;
+    lastCollisionMeshUpdate = FVector(0,0,0);
+    for (float X = -RenderDistance ; X < RenderDistance; X += GeometryNodeSize) {
+        for (float Y = -RenderDistance; Y < RenderDistance; Y += GeometryNodeSize) {
+            for (float Z = -RenderDistance; Z < RenderDistance; Z += GeometryNodeSize) {
+                //placeAndGenerateNode(FVector(X, Y, Z) + currentPawnPos);
+            }
+        }
+    }
+ //   std::thread* t = new std::thread(&AMyPlanetActor::launchNodeManagementLoop, this);
+//    t->detach();
 
-    std::thread* t = new std::thread(&AMyPlanetActor::launchNodeManagementLoop, this);
-    t->detach();
-    this->collisionNode = new Node(FVector(0, 0, 0), Radius, Isolevel,2000, 100, this);
+    this->collisionNode = new Node(FVector(0, 0, 0), Radius, Isolevel, GeometryNodeSize, NodeGridcellSize, this);
     Super::BeginPlay();
 }
 
@@ -67,83 +87,22 @@ void AMyPlanetActor::PostActorCreated()
     Super::PostActorCreated();
 }
 
-void AMyPlanetActor::addGridPoint(FVector4 newgridpoint)
+void AMyPlanetActor::PostLoad()
 {
-    for (auto gridpoint : gridPoints) {
-        if (FVector::Distance(FVector(gridpoint), FVector(newgridpoint)) < 10.0) {
-            return;
-        }
-    }
-    gridPoints.push_back(newgridpoint);
-}
-
-void AMyPlanetActor::launchGenerationLoop()
-{
-    while (1) {
-        for (auto n : nodes)
-        {
-            if (FVector::Distance(currentPawnPos, n->location) < IndexGridcellsDist) {
-                n->indexGrid();
-            }
-            if (FVector::Distance(currentPawnPos, n->location) < GenerateGeometriesDist) {
-                TArray<FVector> vertices;
-                TArray<int32> Triangles;
-                TArray<FVector> normals;
-                TArray<FVector2D> UV0;
-                TArray<FProcMeshTangent> tangents;
-                TArray<FLinearColor> vertexColors;
-                if (n->generatePolygons(vertices, Triangles, normals, UV0, vertexColors, tangents) == 1) {
-                    static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(n->index, vertices, Triangles, normals, UV0, vertexColors, tangents, true);
-                    static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
-                    if (planetMaterial)
-                        static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(n->index, planetMaterial);
-                }
-            }
-        }
-    }
+    if (DrawLowPoly) 
+        generateSphere();
+    Super::PostLoad();
 }
 
 void AMyPlanetActor::launchNodeManagementLoop()
 {
     managementMutex.lock();
     while (doManagementLoop) {
-        std::vector<FVector> geometriesToPlace;
-        for (FVector4& gridPoint : gridPoints) {
-            if (FVector::Distance(currentPawnPos, FVector(gridPoint)) < PlaceNodeDist && gridPoint.W !=0 ) {
-                geometriesToPlace.push_back(FVector(gridPoint.X, gridPoint.Y, gridPoint.Z));
-                gridPoint.W = 0;
+        for (int i = nodes.size() - 1; i >= 0; i--) {
+            if (FVector::Distance(nodes.at(i)->location, currentPawnPos) > 1.2*RenderDistance) {
+                nodesToRemove.push_back(i);
             }
         }
-        for (auto gridPoint : geometriesToPlace) {
-            nodesToIndex.push_back(this->nodes.size());
-            placeGeometryNode(gridPoint);
-        }
-        if (!isGenerationReady) continue;
-        for (int iToIndex : nodesToIndex) {
-            if (FVector::Distance(currentPawnPos, this->nodes[iToIndex]->location) < IndexGridcellsDist && !this->nodes[iToIndex]->indexed) {
-                indexIndexesToRemove.push_back(iToIndex);
-                nodesToGenerateGeometry.push_back(iToIndex);
-                isGenerationReady = false;
-            }
-        }
-       
-        for (int iToIndex : nodesToGenerateGeometry) {
-            if (FVector::Distance(currentPawnPos, this->nodes[iToIndex]->location) <  GenerateGeometriesDist && !this->nodes[iToIndex]->generated) {
-                geometryIndexesToRemove.push_back(iToIndex);
-                isGenerationReady = false;
-            }
-        }
-        /*for (int i = 0; i < nodes.size(); i++)
-        {
-            auto n = nodes.at(i);
-            if (FVector::Distance(currentPawnPos, n->location) < IndexGridcellsDist) {
-                //nodesToIndex.push_back(i);
-                n->indexGrid();
-            }
-            if (FVector::Distance(currentPawnPos, n->location) < GenerateGeometriesDist) {
-                nodesToGenerateGeometry.push_back(i);
-            }
-        }*/
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
     managementMutex.unlock();
@@ -253,21 +212,7 @@ void AMyPlanetActor::generateSphere()
     }
 
     TArray<FProcMeshTangent> tangents;
-    auto generateUV3 = [](FVector p) {
-        float _radius = sqrt(p.X * p.X + p.Y * p.Y + p.Z * p.Z);
-        float longitudeRadians = atan2(p.Y, p.X);
-        float latitudeRadians = asin(p.Z / _radius);
-
-        // Convert range -PI...PI to 0...1
-        float s = longitudeRadians / (2 * PI) + 0.5;
-
-        // Convert range -PI/2...PI/2 to 0...1
-        float t = latitudeRadians / PI + 0.5;
-        return FVector2D(s, t);
-
-    };
     static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(0, vertices, indices, normals, texCoords, vertexColors, tangents, false);
-    static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
     static_cast<UProceduralMeshComponent*>(MeshComponent)->GetBodySetup()->bDoubleSidedGeometry = true;
     if (planetMaterial)
         static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(0, planetMaterial);
@@ -275,132 +220,85 @@ void AMyPlanetActor::generateSphere()
         static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(0, vertexColorMaterial);
 }
 
-void AMyPlanetActor::populatePlanetaryGeometry()
-{
-    for (double X = -Radius; X <= Radius; X += GeometryNodeSize) {
-        for (double Y = -Radius; Y <= Radius; Y += GeometryNodeSize) {
-            for (double Z = -Radius; Z <= Radius; Z += GeometryNodeSize) {
-                if (FVector::Distance(FVector(0, 0, 0), FVector(X, Y, Z)) > Radius*0.8  && FVector::Distance(FVector(0, 0, 0), FVector(X, Y, Z)) < Radius*1.2)
-                    gridPoints.push_back(FVector4(X, Y, Z,1));
-                    //placeGeometryNode(FVector(X, Y, Z));
-            }
-        }
-    }
-}
-
 void AMyPlanetActor::placeGeometryNode(FVector location)
 {
     this->nodes.push_back(new Node(location, Radius, Isolevel, GeometryNodeSize, NodeGridcellSize, this));
 }
 
-void AMyPlanetActor::generateGeometries(FVector currentLocation, float scaleFactor)
+void AMyPlanetActor::placeAndGenerateNode(FVector location)
 {
-    throw "Generate geometries is not implemented";
-}
-
-// Called every frame
-void AMyPlanetActor::Tick(float DeltaTime)
-{
-    for (int itoe : indexIndexesToRemove) {
-        nodes[itoe]->indexGrid();
-    }
-    indexIndexesToRemove.clear();
-    for (int itoe : geometryIndexesToRemove) {
-        TArray<FVector> vertices;
-        TArray<int32> Triangles;
-        TArray<FVector> normals;
-        TArray<FVector2D> UV0;
-        TArray<FProcMeshTangent> tangents;
-        TArray<FLinearColor> vertexColors;
-        if (this->nodes[itoe]->generatePolygons(vertices, Triangles, normals, UV0, vertexColors, tangents) == 1) {
-            if (vertices.Num() == 0) continue;
-          /*  this->nodes[itoe]->vertices = vertices;
-            this->nodes[itoe]->Triangles = Triangles;
-            this->nodes[itoe]->normals = normals;
-            this->nodes[itoe]->UV0 = UV0;
-            this->nodes[itoe]->tangents = tangents;
-            this->nodes[itoe]->vertexColors = vertexColors;*/
-            this->nodes[itoe]->empty = false;
-            for (float X = -GeometryNodeSize; X <= GeometryNodeSize; X += GeometryNodeSize) {
-                for (float Y = -GeometryNodeSize; Y <= GeometryNodeSize; Y += GeometryNodeSize) {
-                    for (float Z = -GeometryNodeSize; Z <= GeometryNodeSize; Z += GeometryNodeSize) {
-                        if (X == 0 && Z == 0 && Y == 0) continue;
-                        addGridPoint(FVector(nodes[itoe]->location.X + X, nodes[itoe]->location.Y + Y, nodes[itoe]->location.Z + Z));
-                    }
-                }
-            }
-
-
-            static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(this->nodes[itoe]->index, vertices, Triangles, normals, UV0, vertexColors, tangents, false);
-            static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
-            if (vertexColorMaterial)
-                static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(this->nodes[itoe]->index, vertexColorMaterial);
-            else if (planetMaterial)
-                static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(this->nodes[itoe]->index, planetMaterial);
-           // delete this->nodes[itoe];
-           // this->nodes[itoe]->grid.clear();
-        }
-    }
-    geometryIndexesToRemove.clear();
-    isGenerationReady = true;
-    FVector orig_currentPawnPos = GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorLocation();
-    currentPawnPos = orig_currentPawnPos;
-    currentPawnPos.Normalize();
-    currentPawnPos = currentPawnPos * Radius;
-    for (auto node : nodes) {
-        if(!node->empty){
-            if (FVector::Distance(node->location, currentPawnPos) < 2.0 * GeometryNodeSize) {
-               // MeshComponent->UpdateMeshSection_LinearColor(node->index, node->vertices, node->Triangles, node->normals, node->UV0, node->vertexColors, node->tangents, true);
-               // MeshComponent->collision
-            }
-            else {
-
-            }
-        }
-    }
-    /*
-    if (FVector::Distance(orig_currentPawnPos, FVector(0, 0, 0)) < Radius * 1.1) {
-        MeshComponent->SetMeshSectionVisible(0, false);
-    }
-    else {
-        MeshComponent->SetMeshSectionVisible(0, true);
-    }
-    */
-
+    Node* n = new Node(location, Radius, Isolevel, GeometryNodeSize, NodeGridcellSize, this);
 
     TArray<FVector> vertices;
     TArray<int32> Triangles;
     TArray<FVector> normals;
+    TArray<FVector4> instances;
     TArray<FVector2D> UV0;
     TArray<FProcMeshTangent> tangents;
     TArray<FLinearColor> vertexColors;
-    //((number + multiple/2) / multiple) * multiple;
-    //((currentPawnPos.X+GeometryNodeSize/2)/GeometryNodeSize)*GeometryNodeSize
-    auto closestMultiple = [](int n, int x)
-    {
-        bool flag = false;
-        if (n < 0) {
-            flag = true;
-            n *= -1;
+
+    n->indexGrid();
+
+    if (n->generatePolygons(vertices, Triangles, normals, UV0, vertexColors, tangents, instances) == 1) {
+        static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(n->index, vertices, Triangles, normals, UV0, vertexColors, tangents, false);
+       // static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
+        static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMeshSectionVisible(n->index, true);
+        static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(n->index, planetMaterial);
+        this->nodes.push_back(n);
+    }
+    else {
+        delete n;
+    }
+
+}
+void AMyPlanetActor::freeNode(Node* node)
+{
+    static_cast<UProceduralMeshComponent*>(MeshComponent)->ClearMeshSection(node->index);
+    delete node;
+    node = nullptr;
+}
+void AMyPlanetActor::findPositionsToGenerateNodes()
+{
+}
+bool AMyPlanetActor::checkIfNodeExists(FVector position, float epsilon)
+{
+    for (auto node : nodes) {
+        if(FVector::Distance(node->location, position)<epsilon)
+            return true;
+    }
+        return false;
+}
+// Called every frame
+void AMyPlanetActor::Tick(float DeltaTime)
+{
+    FVector orig_currentPawnPos = GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorLocation();
+    currentPawnPos = orig_currentPawnPos;
+    currentPawnPos.Normalize();
+    currentPawnPos = currentPawnPos * Radius;
+
+    for (auto ntr : nodesToRemove) {
+        freeNode(nodes.at(ntr));
+        nodes.erase(nodes.begin() + ntr);
+    }
+    nodesToRemove.clear();
+    TArray<FVector> vertices;
+    TArray<int32> Triangles;
+    TArray<FVector> normals;
+    TArray<FVector4> instances;
+    TArray<FVector2D> UV0;
+    TArray<FProcMeshTangent> tangents;
+    TArray<FLinearColor> vertexColors;
+    if(FVector::Distance(currentPawnPos,lastCollisionMeshUpdate)>2.0* NodeGridcellSize){
+        this->collisionNode->reindexGrid(currentPawnPos);
+        
+        if (this->collisionNode->generatePolygons(vertices, Triangles, normals, UV0, vertexColors, tangents,instances) == 1) {
+            static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(1, vertices, Triangles, normals, UV0, vertexColors, tangents, true);        
+            //static_cast<UMeshComponent*>(MeshComponent)->friction
+            static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
+            static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMeshSectionVisible(1, true);
+            static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(1, planetMaterial);
         }
-        if (x > n)
-            return x;
-
-        n = n + x / 2;
-        n = n - (n % x);
-
-        return flag ? n * -1 : n;
-    };
-    this->collisionNode->reindexGrid(FVector(
-        closestMultiple((int)currentPawnPos.X, NodeGridcellSize),
-        closestMultiple((int)currentPawnPos.Y, NodeGridcellSize),
-        closestMultiple((int)currentPawnPos.Z, NodeGridcellSize)
-    ));
-    
-    if (this->collisionNode->generatePolygons(vertices, Triangles, normals, UV0, vertexColors, tangents) == 1) {
-        static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(1, vertices, Triangles, normals, UV0, vertexColors, tangents, true);        
-        static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
-        static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMeshSectionVisible(1, true);
+        lastCollisionMeshUpdate = currentPawnPos;
     }
     Super::Tick(DeltaTime);
 }
