@@ -30,7 +30,7 @@ static float  getRandom(float min, float max, float seed)
 {
     std::default_random_engine e;
     e.seed(seed);
-    std::uniform_real_distribution<> dis(min, max); // rage 0 - 1
+    std::uniform_real_distribution<> dis(min, max); 
     return dis(e);
 };
 static int vertexExists(TArray<FVector> vertices, FVector vertex, float epsilon) {
@@ -41,20 +41,22 @@ static int vertexExists(TArray<FVector> vertices, FVector vertex, float epsilon)
     }
     return -1;
 }
+
 static float m_hash(FVector seed) {
-    uint64_t result = uint16_t(seed.X);
-    result = (result << 16) + uint16_t(seed.Y);
-    result = (result << 16) + uint16_t(seed.Z);
-    double i;
-    return modf(sinf(seed.X) * 43758.54f, &i) + modf(sinf(seed.Y) * 97859.954f, &i) + modf(sinf(seed.Z) * 25632.054f, &i);;
+    auto test = (std::hash<float>{}(seed.X - seed.Y - seed.Z)) % 1000;
+    return test;
 }
 static float getRandom(float min, float max, FVector seed) {
     return getRandom(min, max, m_hash(seed));
 }
 static std::vector<FVector> randomPoints(int num, FVector seed, float dist) {
     std::vector<FVector> locs;
-    for (int i = 0; i < num; i++) {
-        FVector loc = FVector(getRandom(-1, 1, seed),  getRandom(-1, 1, 2.0 * seed),  getRandom(-1, 1, 4.0 * seed));
+    FVector loc = FVector(getRandom(-1, 1, seed), getRandom(-1, 1, 2.0 * seed), getRandom(-1, 1, 4.0 * seed));
+    loc.Normalize();
+    locs.push_back(seed + loc * dist);
+    for (int i = 1; i < num; i++) {
+        seed = locs.at(locs.size() - 1);
+        loc = FVector(getRandom(-1, 1, seed),  getRandom(-1, 1, 2.0 * seed),  getRandom(-1, 1, 4.0 * seed));
         loc.Normalize();
         locs.push_back(seed+loc*dist);
     }
@@ -844,7 +846,7 @@ protected:
             }
             std::vector<int> foliagesTest;
             for (auto v : vertices) {
-                std::vector<FVector> locs = randomPoints(getRandom(0, 20, v), v, getRandom(0, 100, v));
+                std::vector<FVector> locs = randomPoints(getRandom(0, 5, v), v, getRandom(0, 100, v));
                 for (auto loc : locs) {
                     FTransform InstanceTransform;
                     FColor topography = texturesOwner->getTopographyAt(generateUV(loc));
