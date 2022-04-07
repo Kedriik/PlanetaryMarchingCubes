@@ -288,7 +288,7 @@ void AMyPlanetActor::Tick(float DeltaTime)
     TArray<FVector2D> UV0;
     TArray<FProcMeshTangent> tangents;
     TArray<FLinearColor> vertexColors;
-    if(FVector::Distance(currentPawnPos,lastCollisionMeshUpdate)>2.0* NodeGridcellSize){
+    if(FVector::Distance(currentPawnPos,lastCollisionMeshUpdate)>10.0* NodeGridcellSize){
         this->collisionNode->reindexGrid(currentPawnPos);
         
         if (this->collisionNode->generatePolygons(vertices, Triangles, normals, UV0, vertexColors, tangents,instances) == 1) {

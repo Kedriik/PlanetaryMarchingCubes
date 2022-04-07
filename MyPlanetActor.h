@@ -844,7 +844,7 @@ protected:
             for(auto tree: texturesOwner->Trees) {
                 tree->ClearInstances();
             }
-            std::vector<int> foliagesTest;
+            //std::vector<int> foliagesTest;
             for (auto v : vertices) {
                 std::vector<FVector> locs = randomPoints(getRandom(0, 5, v), v, getRandom(0, 100, v));
                 for (auto loc : locs) {
@@ -855,9 +855,9 @@ protected:
                     InstanceTransform.SetLocation(loc);
                     FRotator MyRotator = FRotationMatrix::MakeFromZ(loc).Rotator();
                     InstanceTransform.SetRotation(MyRotator.Quaternion());
-                    InstanceTransform.SetScale3D(FVector(0.1, 0.1, 0.1));
+                    InstanceTransform.SetScale3D(FVector(0.1, 0.1, 0.1)*getRandom(0.1,2,loc));
                     texturesOwner->Trees[int(getRandom(0, 8, loc))]->AddInstance(InstanceTransform);
-                    foliagesTest.push_back(int(getRandom(0, 8, loc)));
+                    //foliagesTest.push_back(int(getRandom(0, 8, loc)));
 
                 }
 
