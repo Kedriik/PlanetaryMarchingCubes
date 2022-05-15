@@ -11,8 +11,9 @@
 #include <functional>
 #include <math.h>
 #include <fstream>
+#include <string>
 #include "MyPlanetActor.generated.h"
-
+static std::string nodesPath = "C:/SavedNodes/";
 static int closestMultiple(int n, int x)
 {
     bool flag = false;
@@ -169,7 +170,6 @@ protected:
     virtual void BeginDestroy() override;
     virtual void PostActorCreated() override;
     virtual void PostLoad() override;
-    std::mutex managementMutex;
     FVector currentPawnPos;
     FVector lastCollisionMeshUpdate;
     void launchNodeManagementLoop();
@@ -657,6 +657,7 @@ protected:
         bool empty = true;
         FVector location;
         bool generated = false;
+        bool loaded = false;
         bool indexed = false;
         float radius, isolevel, node_size, gridcell_size;
         int index;
@@ -712,8 +713,9 @@ protected:
 
             }
         }
-        void populateFlora(TArray<FVector> vertices, TArray<InstanceInfo>& treesInstances, TArray<InstanceInfo>& grassInstances) {
-            for (auto _v : vertices) {
+        void populateFlora(TArray<FVector>* vertices, TArray<InstanceInfo>* treesInstances, TArray<InstanceInfo>* grassInstances) {
+            if (vertices->Num() == 0) return;
+            for (auto _v : *vertices) {
                 auto v = 3.1415 * _v;
                 std::vector<FVector> locs = randomPoints(getRandom(texturesOwner->GrassMin, texturesOwner->GrassMax, v), v, getRandom(0, texturesOwner->GrassDist, v));
                 for (auto loc : locs) {
@@ -730,7 +732,7 @@ protected:
                     InstanceTransform.SetScale3D(FVector(1, 1, 1) * scale);
                     info.transform = InstanceTransform;
                     info.type = type;
-                    grassInstances.Add(info);
+                    grassInstances->Add(info);
                     //texturesOwner->Grass[info.type]->AddInstance(InstanceTransform);
                 }
                 v = _v;
@@ -749,7 +751,7 @@ protected:
                     InstanceTransform.SetScale3D(FVector(1, 1, 1) * scale);
                     info.transform = InstanceTransform;
                     info.type = type;
-                    treesInstances.Add(info);
+                    treesInstances->Add(info);
                     //texturesOwner->Trees[info.type]->AddInstance(InstanceTransform);
                 }
             }
@@ -874,10 +876,17 @@ protected:
             TArray<FLinearColor> vertexColors;
             Node* node = new Node(location, owner->Radius, owner->Isolevel, owner->NodeSize, owner->GridcellSize, owner);
             node->reindexGrid(location);
-            if (node->generatePolygons(vertices, Triangles, normals, UV0, vertexColors, tangents, treesInstances,grassInstances) == 0) return nullptr;
+            bool rdy;
+            int rcode;
+            node->generatePolygons(&vertices, &Triangles, &normals, &UV0, &vertexColors,
+                &tangents, &treesInstances, &grassInstances, &rdy, &rcode);
+            if (rcode==1) {
+                delete node;
+                return nullptr;
+            };
 
             std::ofstream myfile;
-            myfile.open("node."+std::to_string(node->index));
+            myfile.open(nodesPath+"node."+std::to_string(node->index));
             
             myfile << std::to_string(vertices.Num())<<" ";
             for (FVector v : vertices) {
@@ -912,7 +921,7 @@ protected:
             }
 
             myfile.close();
-            return nullptr;
+            return node;
         }
         static void load(Node* node,
             TArray<FVector>& vertices,
@@ -923,7 +932,7 @@ protected:
             TArray<FProcMeshTangent>& tangents,
             TArray<InstanceInfo>& treesInstances,
             TArray<InstanceInfo>& grassInstances) {
-            std::ifstream myfile("node." + std::to_string(node->index));
+            std::ifstream myfile(nodesPath + "node." + std::to_string(node->index));
             if (myfile.is_open())
             {
                 int count = 0;
@@ -958,6 +967,7 @@ protected:
                     InstanceInfo info;
                     info.transform = tf;
                     info.type = type;
+                    treesInstances.Add(info);
                 }
                 //grass
                 myfile >> count;
@@ -977,6 +987,7 @@ protected:
                     InstanceInfo info;
                     info.transform = tf;
                     info.type = type;
+                    grassInstances.Add(info);
                 }
 
                 myfile.close();
@@ -1074,14 +1085,14 @@ protected:
                 UV0.Add(FVector2D(uv.X, uv.Y));
             return 1;
         }
-        int generateMarchingCube(TArray<FVector>& vertices,
-            TArray<int32>& Triangles,
-            TArray<FVector>& normals,
-            TArray<FVector2D>& UV0,
-            TArray<FLinearColor>& vertexColor,
-            TArray<FProcMeshTangent>& tangents,
-            TArray<InstanceInfo>& treesInstances,
-            TArray<InstanceInfo>& grassInstances) {
+        int generateMarchingCube(TArray<FVector>* vertices,
+            TArray<int32>* Triangles,
+            TArray<FVector>* normals,
+            TArray<FVector2D>* UV0,
+            TArray<FLinearColor>* vertexColor,
+            TArray<FProcMeshTangent>* tangents,
+            TArray<InstanceInfo>* treesInstances,
+            TArray<InstanceInfo>* grassInstances) {
             if (generated) return 0;
             generated = true;
             std::vector<TRIANGLE> localtriangles;
@@ -1095,49 +1106,48 @@ protected:
             if (localtriangles.size() == 0) return 0;
             int num_wert = 0;
             for (int i = 0; i < localtriangles.size(); i++) {
-                if (vertexExists(vertices, localtriangles[i].p[2], 0.1) < 0) {
-                    vertices.Add(localtriangles[i].p[2]);
-                    Triangles.Add(vertices.Num()-1);
+                if (vertexExists(*vertices, localtriangles[i].p[2], 0.1) < 0) {
+                    vertices->Add(localtriangles[i].p[2]);
+                    Triangles->Add(vertices->Num()-1);
                 }
                 else {
-                    Triangles.Add(vertexExists(vertices, localtriangles[i].p[2], 0.1));
+                    Triangles->Add(vertexExists(*vertices, localtriangles[i].p[2], 0.1));
                 }
 
-                if (vertexExists(vertices, localtriangles[i].p[1], 0.1) < 0) {
-                    vertices.Add(localtriangles[i].p[1]);
-                    Triangles.Add(vertices.Num() - 1);
+                if (vertexExists(*vertices, localtriangles[i].p[1], 0.1) < 0) {
+                    vertices->Add(localtriangles[i].p[1]);
+                    Triangles->Add(vertices->Num() - 1);
                 }
                 else {
-                    Triangles.Add(vertexExists(vertices, localtriangles[i].p[1], 0.1));
+                    Triangles->Add(vertexExists(*vertices, localtriangles[i].p[1], 0.1));
                 }
 
-                if (vertexExists(vertices, localtriangles[i].p[0], 0.1) < 0) {
-                    vertices.Add(localtriangles[i].p[0]);
-                    Triangles.Add(vertices.Num() - 1);
+                if (vertexExists(*vertices, localtriangles[i].p[0], 0.1) < 0) {
+                    vertices->Add(localtriangles[i].p[0]);
+                    Triangles->Add(vertices->Num() - 1);
                 }
                 else {
-                    Triangles.Add(vertexExists(vertices, localtriangles[i].p[0], 0.1));
+                    Triangles->Add(vertexExists(*vertices, localtriangles[i].p[0], 0.1));
                 }
             }
-            //this->populateFlora(vertices);
+
             this->populateFlora(vertices, treesInstances, grassInstances);
-            this->placeFlora(treesInstances, grassInstances);
             generated = true;
 
             return 1;
         }
-        int generatePolygons(TArray<FVector>& vertices,
-            TArray<int32>& Triangles,
-            TArray<FVector>& normals,
-            TArray<FVector2D>& UV0,
-            TArray<FLinearColor>& vertexColor,
-            TArray<FProcMeshTangent>& tangents,
-            TArray<InstanceInfo>& treesInstances,
-            TArray<InstanceInfo>& greesInstances) {
-            if (Node::drawDebugBoxes)
-                return generateCube(vertices, Triangles, normals, UV0, vertexColor, tangents);
-            else
-                return generateMarchingCube(vertices, Triangles, normals, UV0, vertexColor, tangents, treesInstances, greesInstances);
+        void generatePolygons(TArray<FVector>* vertices,
+            TArray<int32>* Triangles,
+            TArray<FVector>* normals,
+            TArray<FVector2D>* UV0,
+            TArray<FLinearColor>* vertexColor,
+            TArray<FProcMeshTangent>* tangents,
+            TArray<InstanceInfo>* treesInstances,
+            TArray<InstanceInfo>* greesInstances,
+            bool* isReady,
+            int* retCode) {
+            *retCode =  generateMarchingCube(vertices, Triangles, normals, UV0, vertexColor, tangents, treesInstances, greesInstances);
+            *isReady = true;
         }
         ~Node() {
             
@@ -1148,10 +1158,23 @@ protected:
     bool checkIfNodeExists(FVector position, float epsilon);
     FVector initialPosition;
     std::vector<Node*> nodes;
-    std::vector<int> nodesToRemove;
-    std::vector<FVector> positionsToGenerateNode;
+    std::vector<Node*> nodesToLoad;
     Node* collisionNode;
     bool bFirstCollisionNodeGeneration = true;
+    TArray<FVector> m_vertices;
+    TArray<int32> m_Triangles;
+    TArray<FVector> m_normals;
+    TArray<FVector2D> m_UV0;
+    TArray<FLinearColor> m_vertexColor;
+    TArray<FProcMeshTangent> m_tangents;
+    TArray<InstanceInfo> m_treesInstances;
+    TArray<InstanceInfo> m_greesInstances;
+    std::mutex managementMutex;
+    std::mutex asyncGenerationMutex;
+    bool m_isReady = false;
+    bool m_isRunning = false;
+    int m_retCode;
+
 public:
     // Called every frame
     virtual void Tick(float DeltaTime) override;
