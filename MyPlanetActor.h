@@ -203,27 +203,7 @@ protected:
 
         FColor PixelColor = FormatedTopographyImageData_copy[Y * (PlanetTopography->GetSizeX()) + X];
         
-        return FVector(PixelColor.R, PixelColor.G, PixelColor.B);// -FVector(125);
-    }
-    FColor getColorAt(FVector2D uv) {
-        if (firstColorLookup) {
-            TextureCompressionSettings OldCompressionSettings = PlanetColor->CompressionSettings;
-            TextureMipGenSettings OldMipGenSettings = PlanetColor->MipGenSettings;
-            bool OldSRGB = PlanetColor->SRGB;
-
-            PlanetColor->CompressionSettings = TextureCompressionSettings::TC_VectorDisplacementmap;
-            PlanetColor->MipGenSettings = TextureMipGenSettings::TMGS_NoMipmaps;
-            PlanetColor->SRGB = false;
-            PlanetColor->UpdateResource();
-            PlanetColorImageData = static_cast<const FColor*>(PlanetColor->PlatformData->Mips[0].BulkData.LockReadOnly());
-            PlanetColor->PlatformData->Mips[0].BulkData.Unlock();
-            firstColorLookup = false;
-        }
-        int X = uv.X * (PlanetColor->GetSizeX());
-        int Y = uv.Y * (PlanetColor->GetSizeY());
-        FColor PixelColor = PlanetColorImageData[Y * (PlanetColor->GetSizeX()) + X];
-        
-        return PixelColor;
+        return FVector(PixelColor.R, PixelColor.G, PixelColor.B) -FVector(125);
     }
     void generateSphere();
     void pregenerateNodes();
@@ -682,7 +662,7 @@ protected:
         bool generated = false;
         bool loaded = false;
         bool indexed = false;
-        bool align = true;
+        bool align = false;
         float radius, isolevel, node_size, gridcell_size;
         int index;
         std::vector<GRIDCELL> grid;
@@ -707,6 +687,7 @@ protected:
                 auto v = 3.1415 * _v;
                 std::vector<FVector> locs = randomPoints(getRandom(texturesOwner->GrassMin, texturesOwner->GrassMax, v), v, getRandom(0, texturesOwner->GrassDist, v));
                 for (auto loc : locs) {
+                    if (FVector::Distance(FVector(0), loc) < texturesOwner->Radius) continue;
                     InstanceInfo info;
                     FVector topography = texturesOwner->getTopographyAt(generateUV(loc));
                     loc.Normalize();
@@ -726,6 +707,7 @@ protected:
                 v = _v;
                 locs = randomPoints(getRandom(texturesOwner->TreesMin, texturesOwner->TreesMax, v), v, getRandom(0, texturesOwner->TreesDist, v));
                 for (auto loc : locs) {
+                    if(FVector::Distance(FVector(0),loc)<texturesOwner->Radius) continue;
                     InstanceInfo info;
                     FVector topography = texturesOwner->getTopographyAt(generateUV(loc));
                     loc.Normalize();
@@ -1003,12 +985,12 @@ protected:
             return FVector2D(sphereCoords.X * 0.5 + 0.5, 1.0 - sphereCoords.Y);
 
         }
-        int generateCube(TArray<FVector>& vertices,
-            TArray<int32>& Triangles,
-            TArray<FVector>& normals,
-            TArray<FVector2D>& UV0,
-            TArray<FLinearColor>& vertexColor,
-            TArray<FProcMeshTangent>& tangents)
+        int generateCube(TArray<FVector>* vertices,
+            TArray<int32>* Triangles,
+            TArray<FVector>* normals,
+            TArray<FVector2D>* UV0,
+            TArray<FLinearColor>* vertexColor,
+            TArray<FProcMeshTangent>* tangents)
         {
             if (generated) return 0;
             generated = true;
@@ -1056,7 +1038,7 @@ protected:
             };
 
             for (int i = 0; i < 36; i++) {
-                _indices[i] += vertices.Num();
+                _indices[i] += vertices->Num();
             }
             auto  get_random = []()
             {
@@ -1066,15 +1048,15 @@ protected:
             };
             FLinearColor linearColor(get_random(), get_random(), get_random(), 1.0);
             for (auto v : _vertices) {
-                vertices.Add(FVector(v.X, v.Y, v.Z));
-                vertexColor.Add(linearColor);
+                vertices->Add(FVector(v.X, v.Y, v.Z));
+                vertexColor->Add(linearColor);
             }
             for (auto i : _indices)
-                Triangles.Add(i);
+                Triangles->Add(i);
             for (auto n : _normals)
-                normals.Add(FVector(n.X, n.Y, n.Z));
+                normals->Add(FVector(n.X, n.Y, n.Z));
             for (auto uv : _texCoords)
-                UV0.Add(FVector2D(uv.X, uv.Y));
+                UV0->Add(FVector2D(uv.X, uv.Y));
             return 1;
         }
         int generateMarchingCube(TArray<FVector>* vertices,
@@ -1139,13 +1121,18 @@ protected:
             TArray<InstanceInfo>* greesInstances,
             bool* isReady,
             int* retCode) {
-            *retCode =  generateMarchingCube(vertices, Triangles, normals, UV0, vertexColor, tangents, treesInstances, greesInstances);
+            *retCode = generateMarchingCube(vertices, Triangles, normals, UV0, vertexColor, tangents, treesInstances, greesInstances);
             *isReady = true;
         }
         void generatePolygonsMeshData(MeshData* md) {
-                md->retCode = generateMarchingCube(&md->vertices, &md->Triangles, 
-                    &md->normals, &md->UV0, &md->vertexColors, &md->tangents, 
-                    &md->treesInstances, &md->greesInstances);
+            if (texturesOwner->DrawMarchingCubes)
+                md->retCode = generateCube(&md->vertices, &md->Triangles, &md->normals, &md->UV0, &md->vertexColors, &md->tangents);
+            else {
+                md->retCode = generateMarchingCube(&md->vertices, &md->Triangles,
+                &md->normals, &md->UV0, &md->vertexColors, &md->tangents,
+                &md->treesInstances, &md->greesInstances);
+
+            }
                 md->isReady = true;
         }
         ~Node() {
@@ -1176,19 +1163,21 @@ protected:
         }
         void placeNode() {
             mesh_data_buffer->lock();
-            if (meshData.retCode == 1) {
+            //if (meshData.retCode == 1) {
                 static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->CreateMeshSection_LinearColor(geometry_node->index, meshData.vertices, meshData.Triangles,
                     meshData.normals, meshData.UV0,meshData.vertexColors, meshData.tangents, true);
                  static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->ContainsPhysicsTriMeshData(true);
                  static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetMeshSectionVisible(geometry_node->index, true);
-                 static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetMaterial(geometry_node->index, owner->planetMaterial);
-                 if(!flora_placed)
-                    geometry_node->placeFlora(meshData.treesInstances, meshData.greesInstances);
-                 UPhysicalMaterial* physicsMaterial = static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->GetMaterial(geometry_node->index)->GetPhysicalMaterial();
-                 if (physicsMaterial != nullptr) {
-                     physicsMaterial->Friction = 1.0;
+                 if(!owner->DrawMarchingCubes){
+                    static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetMaterial(geometry_node->index, owner->planetMaterial);
+                     UPhysicalMaterial* physicsMaterial = static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->GetMaterial(geometry_node->index)->GetPhysicalMaterial();
+                     if (physicsMaterial != nullptr) {
+                         physicsMaterial->Friction = 1.0;
+                     }
                  }
-            }
+                 if (!flora_placed)
+                     geometry_node->placeFlora(meshData.treesInstances, meshData.greesInstances);
+           // }
             node_placed = true;
             flora_placed = true;
             mesh_data_buffer->unlock();

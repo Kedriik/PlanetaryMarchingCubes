@@ -36,7 +36,7 @@ void AMyPlanetActor::BeginPlay()
     {
         static std::default_random_engine e;
         e.seed(std::chrono::system_clock::now().time_since_epoch().count());
-        static std::uniform_real_distribution<> dis(-1, 1); // rage 0 - 1
+        static std::uniform_real_distribution<> dis(-1, 1);
         return dis(e);
     };
     FVector pos = FVector(get_random(), get_random(), get_random());
@@ -45,7 +45,7 @@ void AMyPlanetActor::BeginPlay()
     currentPawnPos = pos * (Radius);initialPosition = currentPawnPos;
     lastCollisionMeshUpdate = FVector(0,0,0);
     findPositionsToGenerateNodes();
-
+    /*
     for (int i = planetaryGridcells.size() - 1; i >= 0; i--) {
         if (FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < IndexGridcellsDist) {
             planetaryGridcells.at(i)->doAsyncWork();
@@ -54,7 +54,7 @@ void AMyPlanetActor::BeginPlay()
             planetaryGridcells_generateMesh.push_back(planetaryGridcells.at(i));
         }
     }
-    
+    */
 
     std::thread* t = new std::thread(&AMyPlanetActor::launchNodeManagementLoop, this);
     t->detach();
@@ -93,12 +93,11 @@ void AMyPlanetActor::launchNodeManagementLoop()
             if (FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < IndexGridcellsDist && !planetaryGridcells.at(i)->async_work_buffered) {
                 planetaryGridcells.at(i)->doAsyncWork();
             }
-           /* if (planetaryGridcells.at(i)->geometry_node != nullptr && FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < PlaceNodeDist && !planetaryGridcells.at(i)->node_placed) {
-                planetaryGridcells_generateMesh.push_back(planetaryGridcells.at(i));
-            }*/
         }
         for (int i = planetaryGridcells.size() - 1; i >= 0; i--) {
-            if (planetaryGridcells.at(i)->geometry_node != nullptr && FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < PlaceNodeDist && !planetaryGridcells.at(i)->node_placed) {
+            if (planetaryGridcells.at(i)->geometry_node != nullptr &&
+                FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < PlaceNodeDist && 
+                !planetaryGridcells.at(i)->node_placed) {
                 planetaryGridcells_generateMesh.push_back(planetaryGridcells.at(i));
             }
         }
@@ -113,7 +112,6 @@ void AMyPlanetActor::launchPregeneratedManagementLoop()
 
 void AMyPlanetActor::generateSphere()
 {
-    return;
     float sphereScalingFactor = 1.0;
     TArray<FVector> vertices;
     TArray<FVector> normals;
@@ -262,12 +260,13 @@ void AMyPlanetActor::freeNode(Node* node)
 
 void AMyPlanetActor::findPositionsToGenerateNodes()
 {
-    float margin = 0.1;
-    for (float X = -Radius * (1 + margin); X < Radius * (1 + margin); X += NodeSize) {
-        for (float Y = -Radius * (1 + margin); Y < Radius * (1 + margin); Y += NodeSize) {
-            for (float Z = -Radius * (1 + margin); Z < Radius * (1 + margin); Z += NodeSize) {
-                //PlanetaryGridcell pg = PlanetaryGridcell(this, FVector(X, Y, Z));
-                planetaryGridcells.push_back(new PlanetaryGridcell(this, FVector(X, Y, Z)));
+    float margin =0.5;
+    float _Radius = Radius;// *0.5;
+    for (float X = -_Radius; X <= _Radius; X += NodeSize) {
+        for (float Y = -_Radius; Y <= _Radius; Y += NodeSize) {
+            for (float Z = -_Radius; Z <= _Radius; Z += NodeSize) {
+               // if(FVector::Distance(FVector(0),FVector(X,Y,Z))>Radius-margin*NodeSize)
+                    planetaryGridcells.push_back(new PlanetaryGridcell(this, FVector(X, Y, Z)));
             }
         }
     }
@@ -277,8 +276,8 @@ void AMyPlanetActor::Tick(float DeltaTime)
 {
     FVector orig_currentPawnPos = GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorLocation();
     currentPawnPos = orig_currentPawnPos;// +GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorForwardVector() * 0.5 * NodeSize;
-    currentPawnPos.Normalize();
-    currentPawnPos = currentPawnPos * Radius;
+   // currentPawnPos.Normalize();
+    //currentPawnPos = currentPawnPos * Radius;
     for (auto gc : planetaryGridcells_generateMesh) {
         gc->placeNode();
         gc->freeMeshData();
