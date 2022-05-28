@@ -1,11 +1,11 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 #include "MyPlanetActor.h"
-#include "ProceduralMeshComponent.h"
+//#include "ProceduralMeshComponent.h"
 #include <thread>
 #include <string>
 #include <chrono>
-#include "PhysicalMaterials/PhysicalMaterial.h"
 int AMyPlanetActor::Node::id = 3;
+std::mutex AMyPlanetActor::Node::id_mutex;
 bool AMyPlanetActor::Node::drawDebugBoxes = false;
 AMyPlanetActor::AMyPlanetActor()
 {
@@ -44,43 +44,20 @@ void AMyPlanetActor::BeginPlay()
     GetWorld()->GetFirstPlayerController()->GetPawn()->SetActorLocation(pos * (Radius + 0.02*Radius));
     currentPawnPos = pos * (Radius);initialPosition = currentPawnPos;
     lastCollisionMeshUpdate = FVector(0,0,0);
-    if(!doPregenerateNodes){
-        TArray<FVector> vertices;
-        TArray<int32> Triangles;
-        TArray<FVector> normals;
-        TArray<InstanceInfo> treesInstances;
-        TArray<InstanceInfo> greesInstances;
-        TArray<FVector2D> UV0;
-        TArray<FProcMeshTangent> tangents;
-        TArray<FLinearColor> vertexColors;
-        bool isReady = true;
-        int retCode;
-        this->collisionNode = new Node(FVector(0, 0, 0), Radius, Isolevel, NodeSize, GridcellSize, this);
-        this->collisionNode->reindexGrid(currentPawnPos);
-            
-        collisionNode->generatePolygons(
-            &vertices, &Triangles, &normals, &UV0,
-            &vertexColors, &tangents, &treesInstances, &greesInstances, &isReady, &retCode);
-        if (retCode == 1) {
-            static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(1, vertices, Triangles, normals, UV0,
-                vertexColors, tangents, true);
-            static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
-            static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMeshSectionVisible(1, true);
-            static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(1, planetMaterial);
-            this->collisionNode->placeFlora(treesInstances, greesInstances);
-            UPhysicalMaterial* physicsMaterial = static_cast<UProceduralMeshComponent*>(MeshComponent)->GetMaterial(1)->GetPhysicalMaterial();
-            if (physicsMaterial != nullptr) {
-                physicsMaterial->Friction = 1.0;
-            }
-            lastCollisionMeshUpdate = collisionNode->location;
+    findPositionsToGenerateNodes();
+
+    for (int i = planetaryGridcells.size() - 1; i >= 0; i--) {
+        if (FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < IndexGridcellsDist) {
+            planetaryGridcells.at(i)->doAsyncWork();
         }
-        
+        if (FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < PlaceNodeDist && !planetaryGridcells.at(i)->node_placed) {
+            planetaryGridcells_generateMesh.push_back(planetaryGridcells.at(i));
+        }
     }
-    else {
-        pregenerateNodes();
-        std::thread* t = new std::thread(&AMyPlanetActor::launchNodeManagementLoop, this);
-        t->detach();
-    }
+    
+
+    std::thread* t = new std::thread(&AMyPlanetActor::launchNodeManagementLoop, this);
+    t->detach();
     Super::BeginPlay();
 }
 
@@ -112,9 +89,17 @@ void AMyPlanetActor::launchNodeManagementLoop()
 {
     managementMutex.lock();
     while (doManagementLoop) {
-        for (int i = nodes.size() - 1; i >= 0; i--) {
-            if (FVector::Distance(nodes.at(i)->location, currentPawnPos) < 1.2*RenderDistance && !nodes.at(i)->loaded) {
-                nodesToLoad.push_back(nodes.at(i));
+        for (int i = planetaryGridcells.size() - 1; i >= 0; i--) {
+            if (FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < IndexGridcellsDist && !planetaryGridcells.at(i)->async_work_buffered) {
+                planetaryGridcells.at(i)->doAsyncWork();
+            }
+           /* if (planetaryGridcells.at(i)->geometry_node != nullptr && FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < PlaceNodeDist && !planetaryGridcells.at(i)->node_placed) {
+                planetaryGridcells_generateMesh.push_back(planetaryGridcells.at(i));
+            }*/
+        }
+        for (int i = planetaryGridcells.size() - 1; i >= 0; i--) {
+            if (planetaryGridcells.at(i)->geometry_node != nullptr && FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < PlaceNodeDist && !planetaryGridcells.at(i)->node_placed) {
+                planetaryGridcells_generateMesh.push_back(planetaryGridcells.at(i));
             }
         }
         std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -128,6 +113,7 @@ void AMyPlanetActor::launchPregeneratedManagementLoop()
 
 void AMyPlanetActor::generateSphere()
 {
+    return;
     float sphereScalingFactor = 1.0;
     TArray<FVector> vertices;
     TArray<FVector> normals;
@@ -250,8 +236,8 @@ void AMyPlanetActor::pregenerateNodes()
                 }
                 else {
                     Node* n = Node::save(FVector(X, Y, Z), this);
-                    if(n != nullptr)
-                        nodes.push_back(n);
+                    //if(n != nullptr)
+                        //nodes.push_back(n);
                 }
             }
         }
@@ -260,36 +246,11 @@ void AMyPlanetActor::pregenerateNodes()
 
 void AMyPlanetActor::placeGeometryNode(FVector location)
 {
-    this->nodes.push_back(new Node(location, Radius, Isolevel, NodeSize, GridcellSize, this));
+   
 }
 
 void AMyPlanetActor::placeAndGenerateNode(FVector location)
 {
-    Node* n = new Node(location, Radius, Isolevel, NodeSize, GridcellSize, this);
-
-    TArray<FVector> vertices;
-    TArray<int32> Triangles;
-    TArray<FVector> normals;
-    TArray<InstanceInfo> treesInstances;
-    TArray<InstanceInfo> greesInstances;
-    TArray<FVector2D> UV0;
-    TArray<FProcMeshTangent> tangents;
-    TArray<FLinearColor> vertexColors;
-    bool rdy;
-    int rcode;
-    n->indexGrid();
-    n->generatePolygons(&vertices, &Triangles, &normals, &UV0, &vertexColors, &tangents, &treesInstances, &greesInstances, &rdy, &rcode);
-    if (rcode == 1) {
-        static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(n->index, vertices, Triangles, normals, UV0, vertexColors, tangents, false);
-       // static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
-        static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMeshSectionVisible(n->index, true);
-        static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(n->index, planetMaterial);
-        this->nodes.push_back(n);
-    }
-    else {
-        delete n;
-    }
-
 }
 
 void AMyPlanetActor::freeNode(Node* node)
@@ -301,15 +262,15 @@ void AMyPlanetActor::freeNode(Node* node)
 
 void AMyPlanetActor::findPositionsToGenerateNodes()
 {
-}
-
-bool AMyPlanetActor::checkIfNodeExists(FVector position, float epsilon)
-{
-    for (auto node : nodes) {
-        if(FVector::Distance(node->location, position)<epsilon)
-            return true;
+    float margin = 0.1;
+    for (float X = -Radius * (1 + margin); X < Radius * (1 + margin); X += NodeSize) {
+        for (float Y = -Radius * (1 + margin); Y < Radius * (1 + margin); Y += NodeSize) {
+            for (float Z = -Radius * (1 + margin); Z < Radius * (1 + margin); Z += NodeSize) {
+                //PlanetaryGridcell pg = PlanetaryGridcell(this, FVector(X, Y, Z));
+                planetaryGridcells.push_back(new PlanetaryGridcell(this, FVector(X, Y, Z)));
+            }
+        }
     }
-        return false;
 }
 // Called every frame
 void AMyPlanetActor::Tick(float DeltaTime)
@@ -318,74 +279,11 @@ void AMyPlanetActor::Tick(float DeltaTime)
     currentPawnPos = orig_currentPawnPos;// +GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorForwardVector() * 0.5 * NodeSize;
     currentPawnPos.Normalize();
     currentPawnPos = currentPawnPos * Radius;
-    if(!doPregenerateNodes){
-        TArray<FVector> vertices;
-        TArray<int32> Triangles;
-        TArray<FVector> normals;
-        TArray<InstanceInfo> treesInstances;
-        TArray<InstanceInfo> greesInstances;
-        TArray<FVector2D> UV0;
-        TArray<FProcMeshTangent> tangents;
-        TArray<FLinearColor> vertexColors;
-        if(FVector::Distance(currentPawnPos,lastCollisionMeshUpdate)>0.1* NodeSize){
-            this->collisionNode->reindexGrid(currentPawnPos);
-            if(!m_isRunning){
-                m_vertices.Empty();
-                m_Triangles.Empty();
-                m_normals.Empty();
-                m_UV0.Empty();
-                m_vertexColor.Empty();
-                m_tangents.Empty();
-                m_treesInstances.Empty();
-                m_greesInstances.Empty();
-                m_isRunning = true;
-                m_isReady = false;
-                std::thread* t = new std::thread(&Node::generatePolygons, collisionNode, 
-                    &m_vertices, &m_Triangles, &m_normals, &m_UV0, 
-                    &m_vertexColor, &m_tangents, &m_treesInstances, &m_greesInstances,&m_isReady, &m_retCode);
-                t->detach();
-                lastCollisionMeshUpdate = currentPawnPos;
-                    
-            }
-            if (m_isReady) {
-                if (m_retCode == 1){
-                    static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(1, m_vertices, m_Triangles, m_normals, m_UV0,
-                        m_vertexColor, m_tangents, true);
-                    static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
-                    static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMeshSectionVisible(1, true);
-                    static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(1, planetMaterial);
-                    this->collisionNode->placeFlora(m_treesInstances, m_greesInstances);
-                    UPhysicalMaterial* physicsMaterial = static_cast<UProceduralMeshComponent*>(MeshComponent)->GetMaterial(1)->GetPhysicalMaterial();
-                    if (physicsMaterial != nullptr) {
-                        physicsMaterial->Friction = 1.0;
-                    }
-                }
-                m_isRunning = false;
-                m_isReady = false;
-            }
-            
-        }
+    for (auto gc : planetaryGridcells_generateMesh) {
+        gc->placeNode();
+        gc->freeMeshData();
     }
-    else {
-        for (Node* n : nodesToLoad) {
-            TArray<FVector> vertices;
-            TArray<int32> Triangles;
-            TArray<FVector> normals;
-            TArray<InstanceInfo> treesInstances;
-            TArray<InstanceInfo> greesInstances;
-            TArray<FVector2D> UV0;
-            TArray<FProcMeshTangent> tangents;
-            TArray<FLinearColor> vertexColors;
-            Node::load(n, vertices, Triangles, normals, UV0, vertexColors, tangents, treesInstances, greesInstances);
-            static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(n->index, vertices, Triangles, normals, UV0, vertexColors, tangents, true);
-            static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
-            static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMeshSectionVisible(n->index, true);
-            static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(n->index, planetMaterial);
-            n->placeFlora(treesInstances, greesInstances);
-            n->loaded = true;
-        }
-        nodesToLoad.clear();
-    }
+    planetaryGridcells_generateMesh.clear();
     Super::Tick(DeltaTime);
 }
 
