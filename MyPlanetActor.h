@@ -174,7 +174,6 @@ protected:
     FVector currentPawnPos;
     FVector lastCollisionMeshUpdate;
     void launchNodeManagementLoop();
-    void launchPregeneratedManagementLoop();
     const FColor* FormatedTopographyImageData;
     FColor* FormatedTopographyImageData_copy;
     const FColor* PlanetColorImageData;
@@ -203,13 +202,12 @@ protected:
 
         FColor PixelColor = FormatedTopographyImageData_copy[Y * (PlanetTopography->GetSizeX()) + X];
         
-        return FVector(PixelColor.R, PixelColor.G, PixelColor.B) -FVector(125);
+        return FVector(0.0);// FVector(PixelColor.R, PixelColor.G, PixelColor.B);
     }
     void generateSphere();
     void pregenerateNodes();
     void placeGeometryNode(FVector location);
     void placeAndGenerateNode(FVector location);
-
     UProceduralMeshComponent* PlanetMesh;
     //Paul Bourke
     typedef struct {
@@ -663,7 +661,7 @@ protected:
         bool loaded = false;
         bool indexed = false;
         bool align = false;
-        float radius, isolevel, node_size, gridcell_size;
+        double radius, isolevel, node_size, gridcell_size;
         int index;
         std::vector<GRIDCELL> grid;
         static int id;
@@ -774,7 +772,7 @@ protected:
             grid.push_back(gridcell);
         }
         void indexGrid() {
-            if (align) alignLocation();
+            
             if (indexed) return;
             for (float X = -node_size / 2.0; X <= node_size / 2.0; X += gridcell_size) {
                 for (float Y = -node_size / 2.0; Y <= node_size / 2.0; Y += gridcell_size) {
@@ -788,17 +786,19 @@ protected:
             }
             indexed = true;
         }
-        void alignLocation() {
-            location = FVector(closestMultiple((int)location.X, gridcell_size),
-                closestMultiple((int)location.Y, gridcell_size),
-                closestMultiple((int)location.Z, gridcell_size));
+        static FVector alignLocation(FVector _location, double alignTo) {
+            return FVector(closestMultiple((int)_location.X, alignTo),
+                closestMultiple((int)_location.Y, alignTo),
+                closestMultiple((int)_location.Z, alignTo));
         }
         void reindexGrid(FVector _location) {
             FVector lastLocation = location;
-            location = _location;
-            if (align) alignLocation();
+            if(align){
+                location = alignLocation(_location, gridcell_size);
+            }else{
+                location = _location;
+            }
             grid.clear();
-            
             generated = false;
             for (float X = -node_size / 2.0; X <= node_size / 2.0; X += gridcell_size) {
                 for (float Y = -node_size / 2.0; Y <= node_size / 2.0; Y += gridcell_size) {
@@ -834,7 +834,7 @@ protected:
                 FVector n = _loc;
                 n.Normalize();
                 gridcell.p.push_back(_loc);
-                float offset = texturesOwner->HeightMultiplier*(topography.X);
+                double offset = texturesOwner->HeightMultiplier*(topography.X);
                 double dist = FVector::Dist(FVector(0, 0, 0), _loc - n * offset);
                 gridcell.val.push_back(radius - dist);
             }
@@ -1140,8 +1140,8 @@ protected:
         }
     };
     void freeNode(Node* node);
-    
     typedef struct PlanetaryGridcell {
+        FVector location;
         bool flora_placed = false;
         bool async_work_buffered = false;
         bool node_placed;
@@ -1149,21 +1149,26 @@ protected:
         Node* geometry_node = nullptr;
         AMyPlanetActor* owner;
         MeshData meshData;
-        FVector location;
-        PlanetaryGridcell(AMyPlanetActor* _owner, FVector _location):owner(_owner), location(_location) {
+        PlanetaryGridcell(AMyPlanetActor* _owner, FVector _location):owner(_owner) {
+            location = Node::alignLocation(_location, owner->GridcellSize);
             mesh_data_buffer = new std::mutex();
         }
         void doAsyncWork() {
-            mesh_data_buffer->lock();
             geometry_node = new Node(location, owner->Radius, owner->Isolevel, owner->NodeSize, owner->GridcellSize, owner);
-            geometry_node->indexGrid();
+            
+            mesh_data_buffer->lock();
+            geometry_node->reindexGrid(location);
             geometry_node->generatePolygonsMeshData(&meshData);
             async_work_buffered = true;
+            static std::vector<int> buffered_indexes;
+            buffered_indexes.push_back(geometry_node->index);
             mesh_data_buffer->unlock();
         }
         void placeNode() {
+            static std::vector<int> placed_indexes;
+            placed_indexes.push_back(geometry_node->index);
             mesh_data_buffer->lock();
-            //if (meshData.retCode == 1) {
+            if (meshData.retCode == 1) {
                 static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->CreateMeshSection_LinearColor(geometry_node->index, meshData.vertices, meshData.Triangles,
                     meshData.normals, meshData.UV0,meshData.vertexColors, meshData.tangents, true);
                  static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->ContainsPhysicsTriMeshData(true);
@@ -1175,9 +1180,12 @@ protected:
                          physicsMaterial->Friction = 1.0;
                      }
                  }
+                 else {
+                     static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetMaterial(geometry_node->index, owner->vertexColorMaterial);
+                 }
                  if (!flora_placed)
                      geometry_node->placeFlora(meshData.treesInstances, meshData.greesInstances);
-           // }
+            }
             node_placed = true;
             flora_placed = true;
             mesh_data_buffer->unlock();
@@ -1197,7 +1205,6 @@ protected:
             delete mesh_data_buffer;
         }
     };
-
     void findPositionsToGenerateNodes();
     FVector initialPosition;
     std::vector<PlanetaryGridcell*> planetaryGridcells;
