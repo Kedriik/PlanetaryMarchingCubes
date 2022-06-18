@@ -4,9 +4,9 @@
 #include <thread>
 #include <string>
 #include <chrono>
-int AMyPlanetActor::Node::id = 10;
-std::mutex AMyPlanetActor::Node::id_mutex;
-bool AMyPlanetActor::Node::drawDebugBoxes = false;
+int  AMyPlanetActor::Node::id = 10;
+std::mutex  AMyPlanetActor::Node::id_mutex;
+bool  AMyPlanetActor::Node::drawDebugBoxes = false;
 AMyPlanetActor::AMyPlanetActor()
 {
     getTopographyAt(FVector2D(0, 0));
@@ -31,7 +31,9 @@ void AMyPlanetActor::BeginPlay()
     Node::drawDebugBoxes = this->DrawDebugBoxes;
     if (DrawLowPoly) {
         generateSphere();
+        static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMeshSectionVisible(0, false);
     }
+
     auto  get_random = []()
     {
         static std::default_random_engine e;
@@ -39,51 +41,43 @@ void AMyPlanetActor::BeginPlay()
         static std::uniform_real_distribution<> dis(-1, 1);
         return dis(e);
     };
-    FVector pos = FVector(get_random(), get_random(), get_random());
+    
+    FVector pos = startPos;
+    if(RandomizeStartPos)
+        pos = FVector(get_random(), get_random(), get_random());
     pos.Normalize();
-    GetWorld()->GetFirstPlayerController()->GetPawn()->SetActorLocation(pos * (Radius + 0.02*Radius));
-    currentPawnPos = pos * (Radius);
+    GetWorld()->GetFirstPlayerController()->GetPawn()->SetActorLocation(pos * (Radius + StartingHeight));
+    currentPawnPos =  pos* (Radius);
     initialPosition = currentPawnPos;
     lastCollisionMeshUpdate = FVector(0,0,0);
     findPositionsToGenerateNodes();
     currentPawnPos.Normalize();
     currentPawnPos = GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorLocation();
-    for (int i = planetaryGridcells.size() - 1; i >= 0; i--) {
-        if (FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < 2*IndexGridcellsDist && !planetaryGridcells.at(i)->async_work_buffered) {
-            planetaryGridcells.at(i)->doAsyncWork();
-        }
-    }
-    for (int i = planetaryGridcells.size() - 1; i >= 0; i--) {
-        if (planetaryGridcells.at(i)->geometry_node != nullptr &&
-            FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < 2*PlaceNodeDist
-            && !planetaryGridcells.at(i)->node_placed
-            && planetaryGridcells.at(i)->async_work_buffered) {
-            planetaryGridcells_generateMesh.push_back(planetaryGridcells.at(i));
-        }
-    }
-
-    for (auto gc : planetaryGridcells_generateMesh) {
-        gc->placeNode();
-        gc->freeMeshData();
-    }
-    planetaryGridcells_generateMesh.clear();
 
     collisionNode = new Node(FVector(0.0), Radius, Isolevel,NodeSize, GridcellSize, this);
     collisionNode->align = true;
-   /* for (int i = planetaryGridcells.size() - 1; i >= 0; i--) {
-        if (true) {
-            planetaryGridcells.at(i)->doAsyncWork();
-            planetaryGridcells.at(i)->placeNode();
-            planetaryGridcells.at(i)->freeMeshData();
+    if(GenerateAsync){
+        for (int i = planetaryGridcells.size() - 1; i >= 0; i--) {
+            if (FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < FirstLoadGenerationMultiplier*IndexGridcellsDist && !planetaryGridcells.at(i)->async_work_buffered) {
+                  planetaryGridcells.at(i)->doAsyncWork();
+                  planetaryGridcells.at(i)->placeNode();
+                  planetaryGridcells.at(i)->freeMeshData();
+            }
         }
-    }*/
-    std::thread* t = new std::thread(&AMyPlanetActor::launchNodeManagementLoop, this);
-    t->detach();
+        std::thread* t = new std::thread(&AMyPlanetActor::launchNodeManagementLoop, this);
+        t->detach();
+    }
     Super::BeginPlay();
 }
 
 void AMyPlanetActor::BeginDestroy()
 {
+    for (auto plantaryGridcell : planetaryGridcells) {
+        if(plantaryGridcell->geometry_node!=nullptr)
+        static_cast<UProceduralMeshComponent*>(MeshComponent)->ClearMeshSection(plantaryGridcell->geometry_node->index);
+        plantaryGridcell->freeMeshData();
+    }
+    Node::id = 10;
     doManagementLoop = false;
     managementMutex.lock();
     //delete collisionNode;
@@ -122,6 +116,11 @@ void AMyPlanetActor::launchNodeManagementLoop()
                 && planetaryGridcells.at(i)->async_work_buffered) {
                 planetaryGridcells_generateMesh.push_back(planetaryGridcells.at(i));
             }
+            else if(planetaryGridcells.at(i)->geometry_node != nullptr &&
+                FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) >2 * FirstLoadGenerationMultiplier * IndexGridcellsDist
+                && planetaryGridcells.at(i)->node_placed){
+                planetaryGridcells_toFree.push_back(planetaryGridcells.at(i));
+            }
         }
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
@@ -129,7 +128,7 @@ void AMyPlanetActor::launchNodeManagementLoop()
 }
 
 void AMyPlanetActor::generateSphere()
-{   
+{
     if (!DrawLowPoly) return;
     float sphereScalingFactor = 1.0;
     TArray<FVector> vertices;
@@ -217,17 +216,9 @@ void AMyPlanetActor::generateSphere()
     TArray<FLinearColor> vertexColors;
     if (PlanetTopography) {
         for (auto v : vertices) {
-//            float R = getPixelAt(PlanetTopography, Node::generateUV(v)).R;//Topography::MarsTopography[Y][X];
-//            texCoords.Add(Node::generateUV(v));
- //           vertexColors.Add(FLinearColor(R, R / 255.0, R / 255.0, 1.0));
         }
 
         for (int i = 0; i < indices.Num(); i++) {
-            //FVector n = vertices[indices[i]];
-            //FColor topography = this->getTopographyAt(Node::generateUV(n));
-            //n.Normalize();
-            //float offset = (this->HeightMultiplier/5.0) * topography.R;
-            //vertices[indices[i]] +=  n * offset;
 
         }
     }
@@ -279,13 +270,16 @@ void AMyPlanetActor::freeNode(Node* node)
 
 void AMyPlanetActor::findPositionsToGenerateNodes()
 {
-    double margin =0.5;
-    double _Radius = (Radius)+ 4.0*NodeSize;// *0.5;
+    double margin = Margin;
+    double _Radius = (Radius)+ margin*NodeSize;// *0.5;
     for (double X = -_Radius; X <= _Radius; X += NodeSize) {
         for (double Y = -_Radius; Y <= _Radius; Y += NodeSize) {
-            for (double Z = -_Radius; Z <= _Radius; Z += NodeSize) {
-                if(FVector::Distance(FVector(0,0,0),FVector(X,Y,Z)) >= Radius - 2.0*NodeSize && FVector::Distance(FVector(0, 0, 0), FVector(X, Y, Z)) <= Radius + 2.0*NodeSize){
-                    planetaryGridcells.push_back(new PlanetaryGridcell(this, FVector(X, Y, Z)));
+            for (double Z = -_Radius; Z <= _Radius; Z +=  NodeSize) {
+                if(FVector::Distance(FVector(0,0,0),FVector(X,Y,Z)) >= Radius - margin*NodeSize && FVector::Distance(FVector(0, 0, 0), FVector(X, Y, Z)) <= Radius + margin*NodeSize){
+                    FVector location = FVector(X,Y,Z);
+                    //location.Normalize();
+                    //location = location * Radius;
+                    planetaryGridcells.push_back(new PlanetaryGridcell(this, location));
                 }
             }
         }
@@ -295,54 +289,64 @@ void AMyPlanetActor::findPositionsToGenerateNodes()
 void AMyPlanetActor::Tick(float DeltaTime)
 {
     FVector orig_currentPawnPos = GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorLocation();
-    currentPawnPos = orig_currentPawnPos;// +GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorForwardVector() * 0.5 * NodeSize;
+    currentPawnPos = orig_currentPawnPos;
     currentPawnPos.Normalize();
     currentPawnPos = currentPawnPos * Radius;
-
-   /* for (int i = planetaryGridcells.size() - 1; i >= 0; i--) {
-        if (FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) < 2 * PlaceNodeDist &&
-            !planetaryGridcells.at(i)->async_work_buffered && !planetaryGridcells.at(i)->node_placed) {
-            planetaryGridcells.at(i)->doAsyncWork();
-            planetaryGridcells.at(i)->placeNode();
-            planetaryGridcells.at(i)->freeMeshData();
+    if(!GenerateAsync){
+        for (int i = planetaryGridcells.size() - 1; i >= 0; i--) {
+            if (FVector::Distance(planetaryGridcells.at(i)->location, currentPawnPos) <  IndexGridcellsDist && !planetaryGridcells.at(i)->async_work_buffered) {
+                planetaryGridcells.at(i)->doAsyncWork();
+                planetaryGridcells.at(i)->placeNode();
+            }
         }
-    }*/
-
-    for (auto gc : planetaryGridcells_generateMesh) {
-        gc->placeNode();
-        gc->freeMeshData();
+    }
+    else {
+        for (auto gc : planetaryGridcells_generateMesh) {
+            gc->placeNode();
+            gc->freeMeshData();
+        }
+        for (auto gc : planetaryGridcells_toFree) {
+            gc->async_work_buffered = false;
+            gc->node_placed = false;
+            if (gc->geometry_node != nullptr)
+                static_cast<UProceduralMeshComponent*>(MeshComponent)->ClearMeshSection(gc->geometry_node->index);
+        }
     }
     planetaryGridcells_generateMesh.clear();
+    planetaryGridcells_toFree.clear();
+    if (CollisionNode) {
+        collisionNode->reindexGrid(currentPawnPos);
+        TArray<FVector> vertices;
+        TArray<int32> Triangles;
+        TArray<FVector> normals;
+        TArray<FVector4> instances;
+        TArray<InstanceInfo> treesInstances;
+        TArray<InstanceInfo> greesInstances;
+        TArray<FVector2D> UV0;
+        TArray<FProcMeshTangent> tangents;
+        TArray<FLinearColor> vertexColors;
+        bool rdy;
+        int state;
+        collisionNode->generatePolygons(&vertices, &Triangles, &normals, &UV0, &vertexColors, &tangents, &treesInstances, &greesInstances, &rdy, &state);
+        if (state == 1) {
+            static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(1, vertices, Triangles, normals, UV0, vertexColors, tangents, true);
+            static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
+            static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMeshSectionVisible(1, true);
+            static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(1, planetMaterial);
 
-    collisionNode->reindexGrid(currentPawnPos);
-    TArray<FVector> vertices;
-    TArray<int32> Triangles;
-    TArray<FVector> normals;
-    TArray<FVector4> instances;
-    TArray<InstanceInfo> treesInstances;
-    TArray<InstanceInfo> greesInstances;
-    TArray<FVector2D> UV0;
-    TArray<FProcMeshTangent> tangents;
-    TArray<FLinearColor> vertexColors;
-    bool rdy;
-    int state;
-    collisionNode->generatePolygons(&vertices, &Triangles, &normals, &UV0, &vertexColors, &tangents, &treesInstances, &greesInstances, &rdy, &state);
-    if ( state== 1) {
-        static_cast<UProceduralMeshComponent*>(MeshComponent)->CreateMeshSection_LinearColor(1, vertices, Triangles, normals, UV0, vertexColors, tangents, true);
-        static_cast<UProceduralMeshComponent*>(MeshComponent)->ContainsPhysicsTriMeshData(true);
-        static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMeshSectionVisible(1, true);
-        static_cast<UProceduralMeshComponent*>(MeshComponent)->SetMaterial(1, planetMaterial);
-        
-        UPhysicalMaterial * physicsMaterial = static_cast<UProceduralMeshComponent*>(MeshComponent)->GetMaterial(1)->GetPhysicalMaterial();
-        if (physicsMaterial != nullptr) {
-            physicsMaterial->Friction = 1.0;
-            
+            UPhysicalMaterial* physicsMaterial = static_cast<UProceduralMeshComponent*>(MeshComponent)->GetMaterial(1)->GetPhysicalMaterial();
+            if (physicsMaterial != nullptr) {
+                physicsMaterial->Friction = 1.0;
+
+            }
+
+
         }
-        
-           
+
     }
 
-
+    if (LogPawnPos) {
+        GEngine->AddOnScreenDebugMessage(-1, 120.f, FColor::Green, FVectorToString(GetWorld()->GetFirstPlayerController()->GetPawn()->GetActorLocation()).c_str());
+    }
     Super::Tick(DeltaTime);
 }
-

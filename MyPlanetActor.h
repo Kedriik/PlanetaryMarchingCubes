@@ -32,11 +32,9 @@ static int closestMultiple(int n, int x)
 };
 static float  getRandom(float min, float max, float seed)
 {
-    //srand(seed);
-    //return rand() % (int(max));
     std::default_random_engine e;
     e.seed(seed);
-    std::uniform_real_distribution<> dis(min, max); 
+    std::uniform_real_distribution<> dis(min, max);
     return dis(e);
 };
 static int vertexExists(TArray<FVector> vertices, FVector vertex, float epsilon) {
@@ -54,6 +52,9 @@ static float m_hash(FVector seed) {
 static float getRandom(float min, float max, FVector seed) {
     return getRandom(min, max, m_hash(seed));
 }
+static std::string FVectorToString(FVector v) {
+    return std::string("(") + std::to_string(v.X) + std::string(",") + std::to_string(v.Y) + std::string(",") + std::to_string(v.Z) + std::string(")");
+}
 static std::vector<FVector> randomPoints(int num, FVector seed, float dist) {
     std::vector<FVector> locs;
     if (num == 0) return locs;
@@ -62,9 +63,9 @@ static std::vector<FVector> randomPoints(int num, FVector seed, float dist) {
     locs.push_back(seed + loc * dist);
     for (int i = 1; i < num; i++) {
         seed = locs.at(locs.size() - 1);
-        loc = FVector(getRandom(-1, 1, seed),  getRandom(-1, 1, 2.0 * seed),  getRandom(-1, 1, 4.0 * seed));
+        loc = FVector(getRandom(-1, 1, seed), getRandom(-1, 1, 2.0 * seed), getRandom(-1, 1, 4.0 * seed));
         loc.Normalize();
-        locs.push_back(seed+loc*dist);
+        locs.push_back(seed + loc * dist);
     }
     return locs;
 }
@@ -95,19 +96,13 @@ public:
         bool doPregenerateNodes = false;
 
     UPROPERTY(EditAnywhere, Category = "GeometryProperties")
-        float GenerateGeometriesDist = 500;
-
-    UPROPERTY(EditAnywhere, Category = "GeometryProperties")
         float IndexGridcellsDist = 1000;
 
     UPROPERTY(EditAnywhere, Category = "GeometryProperties")
         float PlaceNodeDist = 2000;
 
     UPROPERTY(EditAnywhere, Category = "GeometryProperties")
-        float RenderDistance = 10000;
-
-    UPROPERTY(EditAnywhere, Category = "GeometryProperties")
-        float NodeSize = 1000;
+        double NodeSize = 1000;
 
     UPROPERTY(EditAnywhere, Category = "GeometryProperties")
         float GridcellSize = 100;
@@ -119,7 +114,13 @@ public:
         float HeightMultiplier = 1;
 
     UPROPERTY(EditAnywhere, Category = "GeometryProperties")
-        float FirstLoadGenerationMultiplier = 1.0;
+        double VerticalOffset = -125;
+
+    UPROPERTY(EditAnywhere, Category = "GeometryProperties")
+        float FirstLoadGenerationMultiplier = 2.0;
+
+    UPROPERTY(EditAnywhere, Category = "GeometryProperties")
+        double Margin = 1.0;
 
     UPROPERTY(EditAnywhere, Category = "GeometryProperties")
         bool DrawMarchingCubes = true;
@@ -132,9 +133,26 @@ public:
 
     UPROPERTY(EditAnywhere, Category = "GeometryProperties")
         float stackCount = 100;
+    UPROPERTY(EditAnywhere, Category = "GeometryProperties")
+        bool GenerateAsync = false;
 
     UPROPERTY(EditAnywhere, Category = "Debug")
         bool DrawDebugBoxes = false;
+
+    UPROPERTY(EditAnywhere, Category = "Debug")
+        bool CollisionNode = false;
+
+    UPROPERTY(EditAnywhere, Category = "Debug")
+        bool RandomizeStartPos = false;
+
+    UPROPERTY(EditAnywhere, Category = "Debug")
+        FVector startPos = FVector(0);
+
+    UPROPERTY(EditAnywhere, Category = "Debug")
+        bool LogPawnPos = true;
+
+    UPROPERTY(EditAnywhere, Category = "Debug")
+        double StartingHeight = 150;
 
     UPROPERTY(EditAnywhere, Category = "Flora")
         int GrassMin = 50;
@@ -154,29 +172,14 @@ public:
     UPROPERTY(EditAnywhere, Category = "Flora")
         int TreesDist = 100;
 
+    UPROPERTY(EditAnywhere, Category = "Flora")
+        int PerVertexFlora = 100;
+
     UPROPERTY(EditAnywhere, Instanced, Category = "Flora")
         TArray<UFoliageInstancedStaticMeshComponent*> Trees;
 
     UPROPERTY(EditAnywhere, Instanced, Category = "Flora")
         TArray<UFoliageInstancedStaticMeshComponent*> Grass;
-
-protected:
-    // Called when the game starts or when spawned
-    uint8* raw = NULL;
-    bool isGenerationReady = true;
-    bool firstLookup = true;
-    bool firstColorLookup = true;
-    bool doManagementLoop = true;
-    virtual void BeginPlay() override;
-    virtual void BeginDestroy() override;
-    virtual void PostActorCreated() override;
-    virtual void PostLoad() override;
-    FVector currentPawnPos;
-    FVector lastCollisionMeshUpdate;
-    void launchNodeManagementLoop();
-    const FColor* FormatedTopographyImageData;
-    FColor* FormatedTopographyImageData_copy;
-    const FColor* PlanetColorImageData;
     FVector getTopographyAt(FVector2D uv) {
         if (PlanetTopography == NULL) return FVector(0.0);
         if (firstLookup) {
@@ -193,27 +196,45 @@ protected:
             int test = sizeof(FColor);
             int x = PlanetTopography->GetSizeX();
             int y = PlanetTopography->GetSizeY();
-            std::memcpy(FormatedTopographyImageData_copy, FormatedTopographyImageData, x*y*sizeof(FColor));
+            std::memcpy(FormatedTopographyImageData_copy, FormatedTopographyImageData, x * y * sizeof(FColor));
             PlanetTopography->PlatformData->Mips[0].BulkData.Unlock();
             firstLookup = false;
+            gX = PlanetTopography->GetSizeX();
+            gY = PlanetTopography->GetSizeY();
         }
-        int X = uv.X * (PlanetTopography->GetSizeX());
-        int Y = uv.Y * (PlanetTopography->GetSizeY());
+        int X = uv.X * (gX);
+        int Y = uv.Y * (gY);
 
-        FColor PixelColor = FormatedTopographyImageData_copy[Y * (PlanetTopography->GetSizeX()) + X];
-        
-        return FVector(0.0);// FVector(PixelColor.R, PixelColor.G, PixelColor.B);
-    }
+        FColor PixelColor = FormatedTopographyImageData_copy[Y * gX + X];
+
+        return   FVector(PixelColor.R, PixelColor.G, PixelColor.B) - FVector(VerticalOffset);
+    };
+protected:
+    // Called when the game starts or when spawned
+    uint8* raw = NULL;
+    bool isGenerationReady = true;
+    bool firstLookup = true;
+    bool firstColorLookup = true;
+    bool doManagementLoop = true;
+    virtual void BeginPlay() override;
+    virtual void BeginDestroy() override;
+    virtual void PostActorCreated() override;
+    virtual void PostLoad() override;
+    FVector currentPawnPos;
+    FVector lastCollisionMeshUpdate;
+    void launchNodeManagementLoop();
+    const FColor* FormatedTopographyImageData;
+    FColor* FormatedTopographyImageData_copy;
+    int gX, gY;
+    const FColor* PlanetColorImageData;
     void generateSphere();
     void pregenerateNodes();
     void placeGeometryNode(FVector location);
     void placeAndGenerateNode(FVector location);
-    UProceduralMeshComponent* PlanetMesh;
     //Paul Bourke
     typedef struct {
         FVector p[3];
     } TRIANGLE;
-    std::vector<TRIANGLE> triangles;
     typedef struct {
         std::vector<FVector> p;
         std::vector<double> val;
@@ -681,7 +702,14 @@ protected:
         }
         void populateFlora(TArray<FVector>* vertices, TArray<InstanceInfo>* treesInstances, TArray<InstanceInfo>* grassInstances) {
             if (vertices->Num() == 0) return;
+            int i = 0;
             for (auto _v : *vertices) {
+                if (i % texturesOwner->PerVertexFlora != 0) {
+                    i++;
+                    continue;
+                }
+                i++;
+                
                 auto v = 3.1415 * _v;
                 std::vector<FVector> locs = randomPoints(getRandom(texturesOwner->GrassMin, texturesOwner->GrassMax, v), v, getRandom(0, texturesOwner->GrassDist, v));
                 for (auto loc : locs) {
@@ -700,12 +728,11 @@ protected:
                     info.transform = InstanceTransform;
                     info.type = type;
                     grassInstances->Add(info);
-                    //texturesOwner->Grass[info.type]->AddInstance(InstanceTransform);
                 }
                 v = _v;
                 locs = randomPoints(getRandom(texturesOwner->TreesMin, texturesOwner->TreesMax, v), v, getRandom(0, texturesOwner->TreesDist, v));
                 for (auto loc : locs) {
-                    if(FVector::Distance(FVector(0),loc)<texturesOwner->Radius) continue;
+                    if (FVector::Distance(FVector(0), loc) < texturesOwner->Radius) continue;
                     InstanceInfo info;
                     FVector topography = texturesOwner->getTopographyAt(generateUV(loc));
                     loc.Normalize();
@@ -720,8 +747,27 @@ protected:
                     info.transform = InstanceTransform;
                     info.type = type;
                     treesInstances->Add(info);
-                    //texturesOwner->Trees[info.type]->AddInstance(InstanceTransform);
                 }
+            }
+        }
+        void populateFlora(FVector _location, TArray<InstanceInfo>* treesInstances, TArray<InstanceInfo>* grassInstances) {
+            std::vector<FVector> locs = randomPoints(getRandom(texturesOwner->TreesMin, texturesOwner->TreesMax, _location), _location, getRandom(0, texturesOwner->TreesDist, _location));
+            for (auto loc : locs) {
+                if (FVector::Distance(FVector(0), loc) < texturesOwner->Radius) continue;
+                InstanceInfo info;
+                FVector topography = texturesOwner->getTopographyAt(generateUV(loc));
+                loc.Normalize();
+                loc = loc * (radius + texturesOwner->HeightMultiplier * topography.X);
+                float scale = getRandom(1, 2, loc);
+                int type = int(getRandom(0, texturesOwner->Grass.Num(), loc));
+                FTransform InstanceTransform;
+                InstanceTransform.SetLocation(loc);
+                FRotator MyRotator = FRotationMatrix::MakeFromZ(loc).Rotator();
+                InstanceTransform.SetRotation(MyRotator.Quaternion());
+                InstanceTransform.SetScale3D(FVector(1, 1, 1) * scale);
+                info.transform = InstanceTransform;
+                info.type = type;
+                treesInstances->Add(info);
             }
         }
         void placeFlora(TArray<InstanceInfo>& treesInstances, TArray<InstanceInfo>& grassInstances) {
@@ -751,7 +797,7 @@ protected:
 
             ownedGrassInstances.Empty();
             ownedTreesInstances.Empty();
-            for (int i = 0; i < treesInstances.Num();i++) {
+            for (int i = 0; i < treesInstances.Num(); i++) {
                 OwnedInstanceInfo info;
                 info.type = treesInstances[i].type;
                 info.id = texturesOwner->Trees[info.type]->AddInstance(treesInstances[i].transform);
@@ -764,7 +810,6 @@ protected:
                 ownedGrassInstances.Add(info);
             }
 
-
         }
         void createGridcell(FVector _location) {
             GRIDCELL gridcell;
@@ -772,7 +817,7 @@ protected:
             grid.push_back(gridcell);
         }
         void indexGrid() {
-            
+
             if (indexed) return;
             for (float X = -node_size / 2.0; X <= node_size / 2.0; X += gridcell_size) {
                 for (float Y = -node_size / 2.0; Y <= node_size / 2.0; Y += gridcell_size) {
@@ -781,7 +826,7 @@ protected:
                         indexGridcell(gridcell, FVector(X, Y, Z) + location);
                         grid.push_back(gridcell);
                     }
-                } 
+                }
 
             }
             indexed = true;
@@ -793,9 +838,10 @@ protected:
         }
         void reindexGrid(FVector _location) {
             FVector lastLocation = location;
-            if(align){
+            if (align) {
                 location = alignLocation(_location, gridcell_size);
-            }else{
+            }
+            else {
                 location = _location;
             }
             grid.clear();
@@ -834,8 +880,10 @@ protected:
                 FVector n = _loc;
                 n.Normalize();
                 gridcell.p.push_back(_loc);
-                double offset = texturesOwner->HeightMultiplier*(topography.X);
+                double offset = texturesOwner->HeightMultiplier * (topography.X);
                 double dist = FVector::Dist(FVector(0, 0, 0), _loc - n * offset);
+
+                //GEngine->AddOnScreenDebugMessage(-1, 120.f, FColor::Red, std::to_string(radius-dist).c_str());
                 gridcell.val.push_back(radius - dist);
             }
         }
@@ -854,15 +902,15 @@ protected:
             int rcode;
             node->generatePolygons(&vertices, &Triangles, &normals, &UV0, &vertexColors,
                 &tangents, &treesInstances, &grassInstances, &rdy, &rcode);
-            if (rcode==1) {
+            if (rcode == 1) {
                 delete node;
                 return nullptr;
             };
 
             std::ofstream myfile;
-            myfile.open(nodesPath+"node."+std::to_string(node->index));
-            
-            myfile << std::to_string(vertices.Num())<<" ";
+            myfile.open(nodesPath + "node." + std::to_string(node->index));
+
+            myfile << std::to_string(vertices.Num()) << " ";
             for (FVector v : vertices) {
                 myfile << v.X << " " << v.Y << " " << v.Z << " ";
             }
@@ -871,7 +919,7 @@ protected:
             for (int32 v : Triangles) {
                 myfile << v << " ";
             }
-            
+
             myfile << std::to_string(treesInstances.Num()) << " ";
             for (InstanceInfo v : treesInstances) {
                 FVector loc = v.transform.GetLocation();
@@ -879,10 +927,10 @@ protected:
                 FQuat q = v.transform.GetRotation();
                 myfile << q.X << " " << q.Y << " " << q.Z << " " << q.W << " ";
                 FVector s = v.transform.GetScale3D();
-                myfile << s.X << " " << s.Y << " " << s.Z  << " ";
+                myfile << s.X << " " << s.Y << " " << s.Z << " ";
                 myfile << v.type << " ";
             }
-            
+
             myfile << std::to_string(grassInstances.Num()) << " ";
             for (InstanceInfo v : grassInstances) {
                 FVector loc = v.transform.GetLocation();
@@ -910,28 +958,28 @@ protected:
             if (myfile.is_open())
             {
                 int count = 0;
-                myfile>>count;
-                for (int i = 0; i < count;i++) {
+                myfile >> count;
+                for (int i = 0; i < count; i++) {
                     FVector v;
                     myfile >> v.X >> v.Y >> v.Z;
                     vertices.Add(v);
                 }
 
                 myfile >> count;
-                for (int i = 0; i < count;i++) {
+                for (int i = 0; i < count; i++) {
                     int32 v;
                     myfile >> v;
                     Triangles.Add(v);
                 }
                 //trees
-                myfile >> count ;
+                myfile >> count;
                 for (int i = 0; i < count; i++) {
                     FVector location;
-                    myfile >> location.X  >> location.Y  >> location.Z ;
+                    myfile >> location.X >> location.Y >> location.Z;
                     FQuat q;
-                    myfile >> q.X  >> q.Y  >> q.Z  >> q.W ;
+                    myfile >> q.X >> q.Y >> q.Z >> q.W;
                     FVector s;
-                    myfile >> s.X  >> s.Y  >> s.Z ;
+                    myfile >> s.X >> s.Y >> s.Z;
                     int type;
                     myfile >> type;
                     FTransform tf;
@@ -947,11 +995,11 @@ protected:
                 myfile >> count;
                 for (int i = 0; i < count; i++) {
                     FVector location;
-                    myfile >> location.X  >> location.Y  >> location.Z ;
+                    myfile >> location.X >> location.Y >> location.Z;
                     FQuat q;
-                    myfile >> q.X  >> q.Y  >> q.Z  >> q.W ;
+                    myfile >> q.X >> q.Y >> q.Z >> q.W;
                     FVector s;
-                    myfile >> s.X  >> s.Y  >> s.Z ;
+                    myfile >> s.X >> s.Y >> s.Z;
                     int type;
                     myfile >> type;
                     FTransform tf;
@@ -966,7 +1014,7 @@ protected:
 
                 myfile.close();
             }
-            
+
         }
         static FVector2D generateUV(FVector pos) {
             FVector n = pos;
@@ -1067,23 +1115,30 @@ protected:
             TArray<FProcMeshTangent>* tangents,
             TArray<InstanceInfo>* treesInstances,
             TArray<InstanceInfo>* grassInstances) {
-            if (generated) return 0;
+            if (generated) {
+                //GEngine->AddOnScreenDebugMessage(-1, 120.f, FColor::Red,(std::string("Returned because of generated.Location:")+FVectorToString(location)).c_str());
+                return 0;
+            }
             generated = true;
             std::vector<TRIANGLE> localtriangles;
             for (auto gridcell : grid) {
-                TRIANGLE _triangles[5];
+                TRIANGLE _triangles[10];
                 int ntriangles = Cube::Polygonise(gridcell, 0.0, _triangles);
                 for (int i = 0; i < ntriangles; i++) {
                     localtriangles.push_back(_triangles[i]);
                 }
             }
-            if (localtriangles.size() == 0) return 0;
+            if (localtriangles.size() == 0)
+            {
+                double dist = FVector::Distance(FVector(0.0), location);
+                return 0;
+            }
             int num_wert = 0;
             for (int i = 0; i < localtriangles.size(); i++) {
                 int found_index = vertexExists(*vertices, localtriangles[i].p[2], 0.1);
                 if (found_index < 0) {
                     vertices->Add(localtriangles[i].p[2]);
-                    Triangles->Add(vertices->Num()-1);
+                    Triangles->Add(vertices->Num() - 1);
                 }
                 else {
                     Triangles->Add(found_index);
@@ -1106,7 +1161,8 @@ protected:
                 }
             }
 
-            this->populateFlora(vertices, treesInstances, grassInstances);
+            //this->populateFlora(vertices, treesInstances, grassInstances);
+            this->populateFlora(this->location, treesInstances, grassInstances);
             generated = true;
 
             return 1;
@@ -1129,33 +1185,31 @@ protected:
                 md->retCode = generateCube(&md->vertices, &md->Triangles, &md->normals, &md->UV0, &md->vertexColors, &md->tangents);
             else {
                 md->retCode = generateMarchingCube(&md->vertices, &md->Triangles,
-                &md->normals, &md->UV0, &md->vertexColors, &md->tangents,
-                &md->treesInstances, &md->greesInstances);
+                    &md->normals, &md->UV0, &md->vertexColors, &md->tangents,
+                    &md->treesInstances, &md->greesInstances);
 
             }
-                md->isReady = true;
+            md->isReady = true;
         }
         ~Node() {
-            
+
         }
     };
-    void freeNode(Node* node);
     typedef struct PlanetaryGridcell {
         FVector location;
         bool flora_placed = false;
         bool async_work_buffered = false;
-        bool node_placed;
-        std::mutex *mesh_data_buffer;
+        bool node_placed = false;
+        std::mutex* mesh_data_buffer;
         Node* geometry_node = nullptr;
         AMyPlanetActor* owner;
         MeshData meshData;
-        PlanetaryGridcell(AMyPlanetActor* _owner, FVector _location):owner(_owner) {
+        PlanetaryGridcell(AMyPlanetActor* _owner, FVector _location) :owner(_owner) {
             location = Node::alignLocation(_location, owner->GridcellSize);
             mesh_data_buffer = new std::mutex();
         }
         void doAsyncWork() {
             geometry_node = new Node(location, owner->Radius, owner->Isolevel, owner->NodeSize, owner->GridcellSize, owner);
-            
             mesh_data_buffer->lock();
             geometry_node->reindexGrid(location);
             geometry_node->generatePolygonsMeshData(&meshData);
@@ -1165,26 +1219,19 @@ protected:
             mesh_data_buffer->unlock();
         }
         void placeNode() {
-            static std::vector<int> placed_indexes;
-            placed_indexes.push_back(geometry_node->index);
             mesh_data_buffer->lock();
-            if (meshData.retCode == 1) {
+            if (meshData.retCode==1) {
                 static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->CreateMeshSection_LinearColor(geometry_node->index, meshData.vertices, meshData.Triangles,
-                    meshData.normals, meshData.UV0,meshData.vertexColors, meshData.tangents, true);
-                 static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->ContainsPhysicsTriMeshData(true);
-                 static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetMeshSectionVisible(geometry_node->index, true);
-                 if(!owner->DrawMarchingCubes){
-                    static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetMaterial(geometry_node->index, owner->planetMaterial);
-                     UPhysicalMaterial* physicsMaterial = static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->GetMaterial(geometry_node->index)->GetPhysicalMaterial();
-                     if (physicsMaterial != nullptr) {
-                         physicsMaterial->Friction = 1.0;
-                     }
-                 }
-                 else {
-                     static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetMaterial(geometry_node->index, owner->vertexColorMaterial);
-                 }
-                 if (!flora_placed)
-                     geometry_node->placeFlora(meshData.treesInstances, meshData.greesInstances);
+                    meshData.normals, meshData.UV0, meshData.vertexColors, meshData.tangents, true);
+                static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->ContainsPhysicsTriMeshData(true);
+                static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetMeshSectionVisible(geometry_node->index, true);
+                static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+                static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
+                static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetCollisionObjectType(ECollisionChannel::ECC_WorldDynamic);
+                static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetGenerateOverlapEvents(true);
+                static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->SetMaterial(geometry_node->index, owner->planetMaterial);
+                if (!flora_placed)
+                    geometry_node->placeFlora(meshData.treesInstances, meshData.greesInstances);
             }
             node_placed = true;
             flora_placed = true;
@@ -1195,7 +1242,7 @@ protected:
             async_work_buffered = false;
         }
         void removeNode() {
-            if(geometry_node!=nullptr)
+            if (geometry_node != nullptr)
                 static_cast<UProceduralMeshComponent*>(owner->MeshComponent)->ClearMeshSection(geometry_node->index);
             node_placed = false;
         }
@@ -1205,10 +1252,15 @@ protected:
             delete mesh_data_buffer;
         }
     };
+
+    UProceduralMeshComponent* PlanetMesh;
+    std::vector<TRIANGLE> triangles;
+    void freeNode(Node* node);
     void findPositionsToGenerateNodes();
     FVector initialPosition;
     std::vector<PlanetaryGridcell*> planetaryGridcells;
     std::vector<PlanetaryGridcell*> planetaryGridcells_generateMesh;
+    std::vector<PlanetaryGridcell*> planetaryGridcells_toFree;
     Node* collisionNode;
     bool bFirstCollisionNodeGeneration = true;
     TArray<FVector> m_vertices;
@@ -1230,3 +1282,4 @@ public:
     virtual void Tick(float DeltaTime) override;
 
 };
+
